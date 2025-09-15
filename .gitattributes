@@ -1,0 +1,19 @@
+* text=auto eol=lf
+
+# Mark common binaries to avoid diff/CRLF issues
+*.onnx binary
+*.wav binary
+*.mp3 binary
+*.mp4 binary
+*.avi binary
+*.mov binary
+*.bin binary
+*.pkl binary
+
+# Ensure text files use LF in repo
+*.py text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+

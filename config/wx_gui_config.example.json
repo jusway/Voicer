@@ -1,0 +1,7 @@
+{
+  "output_dir": "",
+  "language": "zh",
+  "vad_threshold": 0.5,
+  "context": "示例：这里填写你的默认场景提示语"
+}
+
