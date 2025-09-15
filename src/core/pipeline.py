@@ -18,6 +18,7 @@ from .vad_processor import VADProcessor
 from .segment_manager import SegmentManager
 from .asr_client import ASRClient
 from .context_manager import ContextManager
+from ..utils.audio_utils import AudioConversionParams
 
 
 class PipelineError(Exception):
@@ -202,13 +203,25 @@ class Pipeline:
         """VAD时间戳检测
 
         Args:
-            audio_path: 音频文件路径
+            audio_path: 音频文件路径（建议为已转换的 Opus）；本方法会为 VAD 生成临时 16kHz/mono WAV
 
         Returns:
             VAD检测结果
         """
         try:
-            vad_result = self.vad_processor.detect_speech_timestamps(audio_path)
+            # 准备 VAD 输入：将音频转换为 16kHz/mono WAV（临时文件）
+            tmp_dir = self.output_dir or Path(settings.CONVERTED_DIR)
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            tmp_wav_path = tmp_dir / f"{Path(audio_path).stem}_vad_16k.wav"
+            params = AudioConversionParams(output_format='.wav', sample_rate=16000, channels=1)
+            conv_res = self.audio_converter.convert_file(str(audio_path), str(tmp_wav_path), params)
+            if not (isinstance(conv_res, dict) and conv_res.get('success')):
+                raise PipelineError(f"VAD预处理失败: {conv_res}")
+
+            # 用预处理后的 WAV 路径做 VAD
+            vad_result = self.vad_processor.detect_speech_timestamps(str(tmp_wav_path))
+            # 将 VAD 结果中的音频文件指向用于后续切割的原文件（通常为 Opus）
+            vad_result.audio_file = str(audio_path)
 
             logger.debug(f"VAD检测完成: {len(vad_result.speech_segments)} 个语音时间段, "
                         f"总语音时长: {vad_result.speech_duration:.1f}s")
@@ -216,6 +229,13 @@ class Pipeline:
 
         except Exception as e:
             raise PipelineError(f"VAD检测失败: {str(e)}")
+        finally:
+            # 清理临时 WAV
+            try:
+                if 'tmp_wav_path' in locals() and os.path.exists(tmp_wav_path):
+                    os.remove(tmp_wav_path)
+            except Exception:
+                pass
 
     def _recognize_segments(self, segments: List, progress_callback: Optional[callable] = None, stop_event: Optional[object] = None) -> List[dict]:
         """识别音频片段

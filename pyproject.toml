@@ -1,18 +1,21 @@
 [project]
-name = "qwen3-asr-api"
-version = "0.1.0"
+name = "Voicer"
+version = "1.0.0"
 description = "长音视频语音识别系统 - 支持超过3分钟音频的分段识别和上下文管理"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "dashscope>=1.24.4",
-    "onnxruntime-gpu>=1.16.0,<1.19.0",
+    "onnxruntime>=1.16.0",
     "soundfile>=0.12.1",
-    "scipy>=1.10.0",
     "tqdm>=4.66.0",
     "wxpython>=4.2.0",
 ]
 
+[[tool.uv.index]]
+name = "tsinghua"
+url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"
+default = true
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

@@ -9,7 +9,6 @@
 
 import numpy as np
 import soundfile as sf
-from scipy import signal
 from pathlib import Path
 from typing import List
 from ..models.vad_segment import VADSegment, VADResult
@@ -44,9 +43,9 @@ class VADProcessor:
                 # 加载预训练的Silero VAD模型
                 model_path = settings.SILERO_VAD_MODEL_PATH
                 if Path(model_path).exists():
-                    # 使用ONNX模型（优先CUDA，回退CPU）
+                    # 使用ONNX模型（CPU provider）
                     import onnxruntime as ort
-                    providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+                    providers = ["CPUExecutionProvider"]
                     self.model = ort.InferenceSession(model_path, providers=providers)
                     logger.info(f"VAD模型加载成功: {model_path} | providers={self.model.get_providers()}")
                 else:
@@ -83,14 +82,10 @@ class VADProcessor:
         if audio_data.shape[0] > 1:
             audio_data = np.mean(audio_data, axis=0, keepdims=True)
             
-        # 重采样到16kHz
+        # 要求输入已为16kHz（重采样应在管线前用ffmpeg完成）
         if sample_rate != self.sample_rate:
-            # 计算重采样比例
-            resample_ratio = self.sample_rate / sample_rate
-            # 使用scipy进行重采样
-            num_samples = int(audio_data.shape[1] * resample_ratio)
-            audio_data = signal.resample(audio_data, num_samples, axis=1)
-            
+            raise ValueError(f"VAD输入采样率应为{self.sample_rate}Hz，当前为{sample_rate}Hz，请在进入VAD前进行预处理。")
+
         # 获取音频总时长
         total_duration = audio_data.shape[1] / self.sample_rate
         
