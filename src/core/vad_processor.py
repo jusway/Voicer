@@ -8,11 +8,13 @@
 """
 
 import numpy as np
+import os
 import soundfile as sf
 from pathlib import Path
 from typing import List
 from ..models.vad_segment import VADSegment, VADResult
 from ..utils.logger import logger
+from ..utils.external import prepare_onnxruntime_dll_search_path
 from ..config.settings import settings
 
 
@@ -34,29 +36,43 @@ class VADProcessor:
         self.min_speech_duration = min_speech_duration
         self.min_silence_duration = min_silence_duration
         self.model = None
+        self._ort_available = None  # None: unknown, True/False: probed
         self.sample_rate = 16000
         
     def _load_model(self):
-        """加载Silero VAD模型"""
-        if self.model is None:
-            try:
-                # 加载预训练的Silero VAD模型
-                model_path = settings.SILERO_VAD_MODEL_PATH
-                if Path(model_path).exists():
-                    # 使用ONNX模型（CPU provider）
-                    import onnxruntime as ort
-                    providers = ["CPUExecutionProvider"]
-                    self.model = ort.InferenceSession(model_path, providers=providers)
-                    logger.info(f"VAD模型加载成功: {model_path} | providers={self.model.get_providers()}")
-                else:
-                    # ONNX模型文件不存在，提示放置路径或调整配置
-                    raise FileNotFoundError(
-                        f"ONNX模型文件不存在: {model_path}。请将模型文件放置到该路径，"
-                        f"或更新 settings.SILERO_VAD_MODEL_PATH 为正确的模型文件路径。"
-                    )
-            except Exception as e:
-                logger.error(f"VAD模型加载失败: {e}")
-                raise
+        """加载Silero VAD模型（失败时降级为能量阈值法，避免整个流程中断）"""
+        # 已经探测过且不可用
+        if self._ort_available is False:
+            return
+        # 已经加载
+        if self.model is not None:
+            return
+
+        # 允许通过环境变量强制禁用 ONNX VAD
+        if os.getenv("DISABLE_ONNX_VAD") == "1" or os.getenv("VOICER_DISABLE_ONNX") == "1":
+            self._ort_available = False
+            logger.warning("已禁用 ONNX VAD（检测到环境变量），将使用简易能量阈值法。")
+            return
+
+        model_path = settings.SILERO_VAD_MODEL_PATH
+        if not Path(model_path).exists():
+            self._ort_available = False
+            logger.warning(f"未找到 Silero VAD 模型文件: {model_path}，将使用简易能量阈值法。")
+            return
+
+        try:
+            # 在 Windows 嵌入式环境下，确保能找到 onnxruntime 的 DLL
+            prepare_onnxruntime_dll_search_path()
+            import onnxruntime as ort  # type: ignore
+            providers = ["CPUExecutionProvider"]
+            self.model = ort.InferenceSession(model_path, providers=providers)
+            self._ort_available = True
+            logger.info(f"VAD模型加载成功: {model_path} | providers={self.model.get_providers()}")
+        except Exception as e:
+            # 不再抛出异常，降级到能量法
+            self._ort_available = False
+            self.model = None
+            logger.warning(f"ONNXRuntime 不可用或加载失败（{e}），将使用简易能量阈值法。")
                 
     def detect_speech_timestamps(self, audio_path: str) -> VADResult:
         """检测语音活动时间戳
@@ -89,7 +105,7 @@ class VADProcessor:
         # 获取音频总时长
         total_duration = audio_data.shape[1] / self.sample_rate
         
-        # 使用ONNX模型进行VAD检测
+        # 使用ONNX模型进行VAD检测（当前实现为简化版能量法；若需要，可替换为真正的 ONNX 推理）
         speech_timestamps = self._detect_with_onnx(audio_data)
             
         # 转换为VADSegment列表

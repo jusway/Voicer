@@ -137,3 +137,50 @@ def ensure_external() -> None:
 if __name__ == "__main__":
     ensure_external()
 
+
+def prepare_onnxruntime_dll_search_path() -> None:
+    """Best-effort: make onnxruntime's native DLLs discoverable on Windows.
+
+    In embedded Python deployments, the loader may not find DLLs under
+    onnxruntime/capi. We add that directory to the DLL search path.
+
+    This is a no-op on non-Windows platforms.
+    """
+    if os.name != "nt":
+        return
+
+    candidates: list[Path] = []
+
+    # 1) Typical embedded layout under ROOT/Lib/site-packages/onnxruntime/capi
+    candidates.append(ROOT / "Lib" / "site-packages" / "onnxruntime" / "capi")
+
+    # 2) Virtualenv or normal installs
+    try:
+        import site  # type: ignore
+
+        for base in site.getsitepackages():
+            candidates.append(Path(base) / "onnxruntime" / "capi")
+    except Exception:
+        pass
+
+    # 3) User override via env
+    for env_key in ("ONNXRUNTIME_CAPI_DIR", "ONNXRUNTIME_DIR"):
+        env_val = os.environ.get(env_key)
+        if env_val:
+            candidates.append(Path(env_val))
+
+    # 4) Dedup and add the first existing path
+    seen = set()
+    for p in candidates:
+        p = p.resolve()
+        if str(p) in seen:
+            continue
+        seen.add(str(p))
+        if p.exists():
+            try:
+                # Python 3.8+: preferred
+                os.add_dll_directory(str(p))  # type: ignore[attr-defined]
+            except Exception:
+                # Fallback: prepend PATH
+                os.environ["PATH"] = str(p) + os.pathsep + os.environ.get("PATH", "")
+            break
