@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     "dashscope>=1.24.4",
     "onnxruntime>=1.16.0",
+    "pyinstaller>=6.16.0",
     "soundfile>=0.12.1",
     "tqdm>=4.66.0",
     "wxpython>=4.2.0",
