@@ -1,6 +1,10 @@
-# 声稿师 Voicer - 长音视频语音识别系统
+<div align="center">
+  <img src="imgs/声稿师ICON.png" alt="声稿师 Voicer" width="128" height="128">
 
-一个基于阿里云通义千问3 ASR Flash模型的长音视频语音识别系统，支持超过3分钟音频的智能分段识别和上下文管理，并提供GUI界面。
+  # 声稿师 Voicer - 长音视频语音识别系统
+
+  一个基于阿里云通义千问3 ASR Flash模型的长音视频语音识别系统，支持超过3分钟音频的智能分段识别和上下文管理，并提供GUI界面。
+</div>
 
 ## ✨ 特性
 
@@ -19,7 +23,7 @@
 
 项目提供 wxPython 图形界面：
 
-![声稿师 Voicer GUI](imgs/gui.png)
+![声稿师 Voicer GUI](imgs/gui截图.png)
 
 ```bash
 # 启动 GUI（推荐用 uv）
