@@ -5,12 +5,15 @@ description = "长音视频语音识别系统 - 支持超过3分钟音频的分�
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "dashscope>=1.24.4",
-    "onnxruntime>=1.16.0",
-    "pyinstaller>=6.16.0",
-    "soundfile>=0.12.1",
-    "tqdm>=4.66.0",
-    "wxpython>=4.2.0",
+    "dashscope>=1.24.4", # 阿里百炼API
+    "diff-match-patch>=20241021", # 对比原稿和校对
+    "onnxruntime>=1.16.0", # Silero VAD
+    "openai>=1.107.3", # 通用接口
+    "pygount>=3.1.0",
+    "pyinstaller>=6.16.0", # 打包
+    "soundfile>=0.12.1", # 音频处理
+    "tqdm>=4.66.0", # 进度条
+    "wxpython>=4.2.0", # 前端GUI
 ]
 
 [[tool.uv.index]]

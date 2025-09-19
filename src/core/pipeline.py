@@ -19,6 +19,8 @@ from .segment_manager import SegmentManager
 from .asr_client import ASRClient
 from .context_manager import ContextManager
 from ..utils.audio_utils import AudioConversionParams
+from .asr_router import AsrRouter
+
 
 
 class PipelineError(Exception):
@@ -104,6 +106,50 @@ class Pipeline:
             check_stop()
             logger.info("步骤1: 音频格式转换")
             report_progress("音频格式转换中...", 10, 100, 10)
+            converted_path, remove_after = self._convert_audio(input_path)
+
+            # 对硅基流动（SiliconFlow）使用整段识别直通分支（不经VAD/分段）
+            if settings.ASR_PROVIDER.lower() == "siliconflow":
+                logger.info("步骤2: 整段识别（SiliconFlow）")
+                report_progress("整段上传/识别中...", 50, 100, 60)
+
+                router = AsrRouter(
+                    provider="siliconflow",
+                    model=settings.ASR_MODEL,
+                    api_key=settings.SILICONFLOW_API_KEY,
+                    base_url=getattr(settings, "SILICONFLOW_BASE_URL", "https://api.siliconflow.cn"),
+                )
+                res = router.recognize(converted_path, context_prompt=None, language=settings.LANGUAGE)
+
+                text_content = res.get("text", "")
+                results = [{
+                    'success': bool(res.get('success')),
+                    'text': text_content,
+                    'segment_id': 0,
+                    'segment_start_time': 0.0,
+                    'segment_end_time': 0.0,
+                    'segment_duration': 0.0,
+                }]
+
+                # 保存结果
+                report_progress("保存识别结果...", 90, 100, 90)
+                output_files = self._save_results(results, output_name)
+
+                # 清理
+                self._cleanup_temp_files(converted_path, [], remove_after)
+
+                report_progress("处理完成", 100, 100, 100)
+                return {
+                    'success': bool(res.get('success')),
+                    'input_file': str(input_path),
+                    'output_files': output_files,
+                    'text_content': text_content,
+                    'speech_segments_count': 0,
+                    'combined_segments_count': 0,
+                    'total_text_length': len(text_content),
+                    'recognition_success_rate': 1.0 if res.get('success') else 0.0,
+                }
+
             converted_path, remove_after = self._convert_audio(input_path)
 
             # 步骤2: VAD检测时间戳
