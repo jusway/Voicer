@@ -16,7 +16,6 @@ from ..config.settings import settings
 from .audio_converter import AudioConverter
 from .vad_processor import VADProcessor
 from .segment_manager import SegmentManager
-from .asr_client import ASRClient
 from .context_manager import ContextManager
 from ..utils.audio_utils import AudioConversionParams
 from .asr_router import AsrRouter
@@ -48,7 +47,8 @@ class Pipeline:
         self.audio_converter = AudioConverter()
         self.vad_processor = VADProcessor()
         self.segment_manager = SegmentManager()
-        self.asr_client = ASRClient()
+        # 延迟创建：仅 DashScope 分支才需要 ASRClient
+        self.asr_client = None
         self.context_manager = ContextManager()
 
         # 设置上下文
@@ -150,7 +150,6 @@ class Pipeline:
                     'recognition_success_rate': 1.0 if res.get('success') else 0.0,
                 }
 
-            converted_path, remove_after = self._convert_audio(input_path)
 
             # 步骤2: VAD检测时间戳
             check_stop()
@@ -175,6 +174,7 @@ class Pipeline:
             check_stop()
             logger.info("步骤4: 语音识别")
             report_progress("开始语音识别...", 40, 100, 40)
+
             recognition_results = self._recognize_segments(combined_segments, progress_callback=report_progress, stop_event=stop_event)
 
             # 步骤5: 结果输出
@@ -313,10 +313,16 @@ class Pipeline:
                 # 构建上下文提示词
                 context_prompt = self.context_manager.build_prompt()
 
-                # 调用ASR识别
-                result = self.asr_client.recognize(
+                # 通过Router调用 DashScope 后端
+                router = AsrRouter(
+                    provider="dashscope",
+                    model=settings.ASR_MODEL,
+                    api_key=settings.DASHSCOPE_API_KEY,
+                )
+                result = router.recognize(
                     audio_path=segment.file_path,
-                    context_prompt=context_prompt
+                    context_prompt=context_prompt,
+                    language=settings.LANGUAGE,
                 )
 
                 if result['success']:
@@ -416,7 +422,7 @@ class Pipeline:
             'audio_converter': self.audio_converter.get_stats() if hasattr(self.audio_converter, 'get_stats') else {},
             'vad_processor': self.vad_processor.get_stats() if hasattr(self.vad_processor, 'get_stats') else {},
             'segment_manager': self.segment_manager.get_stats(),
-            'asr_client': self.asr_client.get_stats(),
+            'asr_client': (self.asr_client.get_stats() if self.asr_client else {}),
             'context_manager': self.context_manager.get_stats()
         }
 

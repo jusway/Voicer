@@ -69,7 +69,7 @@ class MainFrame(wx.Frame):
         self.polish_panel = TextPolishPanel(notebook)
 
         # Add pages
-        notebook.AddPage(asr_panel, "语音识别")
+        notebook.AddPage(asr_panel, "音视频识别文案")
         notebook.AddPage(self.polish_panel, "文本规范/文本润色")
 
         # Set frame sizer

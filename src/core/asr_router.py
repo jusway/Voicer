@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from .asr_backends.siliconflow import SiliconFlowBackend
-from .asr_client import ASRClient as DashScopeClient
+from .asr_backends.dashscope import DashScopeBackend
 
 
 class AsrRouter:
@@ -19,8 +19,8 @@ class AsrRouter:
         if provider == "siliconflow":
             self.backend = SiliconFlowBackend(api_key=api_key, model=model, base_url=base_url or "https://api.siliconflow.cn")
         elif provider == "dashscope":
-            # Reuse existing DashScope client implementation
-            self.backend = DashScopeClient(api_key=api_key, model=model)
+            # Use DashScope backend implementation via SDK
+            self.backend = DashScopeBackend(api_key=api_key, model=model, base_url=base_url)
         else:
             raise ValueError(f"未知ASR提供商: {provider}")
 
