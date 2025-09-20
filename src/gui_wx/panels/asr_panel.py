@@ -12,7 +12,6 @@ import wx.lib.scrolledpanel as scrolled
 from src.gui_wx.dialogs.progress_dialog import ProgressDialog
 from src.gui_wx.dialogs.manage_api_keys import ManageAPIKeysDialog
 from src.gui_wx.dialogs.manage_prompts import ManagePromptsDialog
-from src.gui_wx.dialogs.manage_endpoints import ManageOpenAIEndpointsDialog
 from src.gui_wx.paths import CONFIG_DIR
 
 # Core pipeline
@@ -57,8 +56,6 @@ class ASRPanel(scrolled.ScrolledPanel):
         self.api_key_ctrl = wx.TextCtrl(self, style=wx.TE_PASSWORD)
         self.api_key_ctrl.SetToolTip("请输入阿里百炼 API Key")
         self.api_key_ctrl.Bind(wx.EVT_TEXT, self.on_api_key_change)
-        self.manage_api_btn = wx.Button(self, label="管理 API 端点")
-        self.manage_api_btn.Bind(wx.EVT_BUTTON, self.on_manage_asr_endpoints)
         self.api_status = wx.StaticText(self, label="⚠️ 请设置API Key")
         api_sizer.Add(self.api_label, 0, wx.ALL, 5)
         # Base URL row
@@ -69,7 +66,6 @@ class ASRPanel(scrolled.ScrolledPanel):
         base_row.Add(self.asr_base_url_ctrl, 1, wx.ALL | wx.EXPAND, 5)
         api_sizer.Add(base_row, 0, wx.EXPAND)
         api_input_sizer.Add(self.api_key_ctrl, 1, wx.ALL | wx.EXPAND, 5)
-        api_input_sizer.Add(self.manage_api_btn, 0, wx.ALL, 5)
         api_sizer.Add(api_input_sizer, 0, wx.EXPAND)
         api_sizer.Add(self.api_status, 0, wx.ALL, 5)
         sizer.Add(api_sizer, 0, wx.ALL | wx.EXPAND, 10)
@@ -272,23 +268,7 @@ class ASRPanel(scrolled.ScrolledPanel):
         self.file_label.SetLabel(f"✅ {filename} ({size_mb:.1f} MB)")
         self.on_start_processing(None)
 
-    def on_manage_asr_endpoints(self, event):
-        dlg = ManageOpenAIEndpointsDialog(self)
-        sel = None
-        if dlg.ShowModal() == wx.ID_OK:
-            sel = dlg.get_selected()
-        dlg.Destroy()
-        if sel:
-            bu = (sel.get("base_url", "") or "").strip().rstrip("/")
-            if bu.endswith("/v1"):
-                bu = bu[:-3]
-            self.asr_base_url_ctrl.SetValue(bu)
-            key = (sel.get("key", "") or "").strip()
-            if key:
-                self.api_key = key
-                self.api_key_ctrl.SetValue(key)
-                self.api_status.SetLabel("✅ API Key已设置")
-                self.api_status.SetForegroundColour(wx.Colour(0, 128, 0))
+
 
     def on_manage_api_keys(self, event):
         dlg = ManageAPIKeysDialog(self)

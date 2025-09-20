@@ -9,7 +9,6 @@ from openai import OpenAI
 
 from src.utils.text_diff import generate_html_diff_dmp
 from src.gui_wx.paths import CONFIG_DIR
-from src.gui_wx.dialogs.manage_endpoints import ManageOpenAIEndpointsDialog
 from src.gui_wx.dialogs.manage_presets import ManageTextPolishPresetsDialog
 
 
@@ -28,6 +27,7 @@ class TextPolishPanel(wx.Panel):
         self.input_txt_path = ""
         self.output_dir_override = ""
         self.current_system_instruction = None
+        self._saved_model_name = None
 
         vbox = wx.BoxSizer(wx.VERTICAL)
 
@@ -44,9 +44,7 @@ class TextPolishPanel(wx.Panel):
         base_row.Add(wx.StaticText(self, label="Base URL:"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 5)
         self.base_url_ctrl = wx.TextCtrl(self, value="")
         base_row.Add(self.base_url_ctrl, 1, wx.ALL | wx.EXPAND, 5)
-        self.manage_ep_btn = wx.Button(self, label="管理中转站")
-        self.manage_ep_btn.Bind(wx.EVT_BUTTON, self.on_manage_endpoints)
-        base_row.Add(self.manage_ep_btn, 0, wx.ALL, 5)
+
         api_sizer.Add(base_row, 0, wx.EXPAND)
 
         api_key_row = wx.BoxSizer(wx.HORIZONTAL)
@@ -432,18 +430,46 @@ class TextPolishPanel(wx.Panel):
             names = ["<无可用模型>"]
         self.model_choice.Set(names)
         if names and names[0] != "<无可用模型>":
-            self.model_choice.SetSelection(0)
+            idx = 0
+            try:
+                if getattr(self, "_saved_model_name", None) and self._saved_model_name in names:
+                    idx = names.index(self._saved_model_name)
+            except Exception:
+                idx = 0
+            self.model_choice.SetSelection(idx)
 
-    def on_manage_endpoints(self, event):
-        dlg = ManageOpenAIEndpointsDialog(self)
-        sel = None
-        if dlg.ShowModal() == wx.ID_OK:
-            sel = dlg.get_selected()
-        dlg.Destroy()
-        if sel:
-            self.base_url_ctrl.SetValue(sel.get("base_url", ""))
-            self.openai_api_key_ctrl.SetValue(sel.get("key", ""))
-            self.on_refresh_models(None)
+    # ===== Config (persist base_url, api_key, model) =====
+    def load_config(self):
+        path = CONFIG_DIR / "wx_gui_textpolish_config.json"
+        if path.exists():
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    cfg = json.load(f) or {}
+                self.base_url_ctrl.SetValue(cfg.get("base_url", "") or "")
+                self.openai_api_key_ctrl.SetValue(cfg.get("api_key", "") or "")
+                self._saved_model_name = (cfg.get("model", "") or None)
+                try:
+                    if self._saved_model_name:
+                        self.model_choice.SetStringSelection(self._saved_model_name)
+                except Exception:
+                    pass
+            except Exception as e:
+                print(f"加载文本规范配置失败: {e}")
+
+    def save_config(self):
+        cfg = {
+            "base_url": self.base_url_ctrl.GetValue().strip(),
+            "api_key": self.openai_api_key_ctrl.GetValue().strip(),
+            "model": (self.model_choice.GetStringSelection() or ""),
+        }
+        try:
+            with open(CONFIG_DIR / "wx_gui_textpolish_config.json", "w", encoding="utf-8") as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"保存文本规范配置失败: {e}")
+
+
+
 
     def on_manage_presets(self, event):
         dlg = ManageTextPolishPresetsDialog(self)

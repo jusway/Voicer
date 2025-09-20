@@ -35,22 +35,6 @@ from src.gui_wx.panels.text_polish_panel import TextPolishPanel
 from src.gui_wx.panels.asr_panel import ASRPanel
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 class MainFrame(wx.Frame):
     def __init__(self):
         super().__init__(None, title="🎙️ 声稿师 Voicer", size=(800, 1000))
@@ -82,11 +66,11 @@ class MainFrame(wx.Frame):
         self.asr_panel = asr_panel
 
         # --- TextPolish Tab ---
-        polish_panel = TextPolishPanel(notebook)
+        self.polish_panel = TextPolishPanel(notebook)
 
         # Add pages
         notebook.AddPage(asr_panel, "语音识别")
-        notebook.AddPage(polish_panel, "文本规范/文本润色")
+        notebook.AddPage(self.polish_panel, "文本规范/文本润色")
 
         # Set frame sizer
         root_sizer = wx.BoxSizer(wx.VERTICAL)
@@ -170,6 +154,8 @@ class MainFrame(wx.Frame):
         try:
             if hasattr(self, "asr_panel") and hasattr(self.asr_panel, "load_config"):
                 self.asr_panel.load_config()
+            if hasattr(self, "polish_panel") and hasattr(self.polish_panel, "load_config"):
+                self.polish_panel.load_config()
         except Exception as e:
             print(f"加载配置失败: {e}")
 
@@ -196,6 +182,8 @@ class MainFrame(wx.Frame):
         try:
             if hasattr(self, "asr_panel") and hasattr(self.asr_panel, "save_config"):
                 self.asr_panel.save_config()
+            if hasattr(self, "polish_panel") and hasattr(self.polish_panel, "save_config"):
+                self.polish_panel.save_config()
         except Exception as e:
             print(f"保存配置失败: {e}")
 
