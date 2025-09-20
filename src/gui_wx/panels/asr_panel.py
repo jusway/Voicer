@@ -22,7 +22,7 @@ from src.gui_wx.paths import CONFIG_DIR
 # Core pipeline
 try:
     from src.core.pipeline import Pipeline
-    from src.config.settings import settings as global_settings
+    from src.core.pipeline_config import PipelineConfig, ProviderKeys, ProviderEndpoints
     HAS_CORE_MODULES = True
 except Exception as e:
     print(f"核心模块导入失败: {e}")
@@ -364,30 +364,38 @@ class ASRPanel(scrolled.ScrolledPanel):
 
     def process_audio_background(self, progress_dlg: ProgressDialog):
         try:
-            # 更新全局配置
+            # 构造 Pipeline 配置（依赖注入，避免写全局）
             provider = 'siliconflow' if self.provider_choice.GetSelection() == 1 else 'dashscope'
-            global_settings.ASR_PROVIDER = provider
-            global_settings.ASR_MODEL = self.model_choice.GetStringSelection()
-            if provider == 'siliconflow':
-                global_settings.SILICONFLOW_API_KEY = self.api_key
-            else:
-                global_settings.DASHSCOPE_API_KEY = self.api_key
-            if provider == 'siliconflow':
+            # SiliconFlow Base URL（可选）
+            siliconflow_base = None
+            if provider == 'siliconflow' and hasattr(self, 'asr_base_url_ctrl'):
                 try:
                     bu = (self.asr_base_url_ctrl.GetValue().strip() or "")
                     if bu:
                         bu = bu.rstrip('/')
                         if bu.endswith('/v1'):
                             bu = bu[:-3]
-                        global_settings.SILICONFLOW_BASE_URL = bu
+                        siliconflow_base = bu
                 except Exception:
-                    pass
+                    siliconflow_base = None
 
-            global_settings.LANGUAGE = self.settings.get('language', 'zh')
-            global_settings.VAD_THRESHOLD = self.settings.get('vad_threshold', 0.5)
+            cfg = PipelineConfig(
+                provider=provider,
+                model=self.model_choice.GetStringSelection(),
+                language=self.settings.get('language', 'zh'),
+                keys=ProviderKeys(
+                    dashscope=(self.api_key if provider == 'dashscope' else None),
+                    siliconflow=(self.api_key if provider == 'siliconflow' else None),
+                ),
+                base_urls=ProviderEndpoints(
+                    siliconflow=siliconflow_base,
+                ),
+                vad_threshold=self.settings.get('vad_threshold', 0.5),
+                context=self.settings.get('context', ''),
+            )
 
             output_dir = self.output_dir_override if self.output_dir_override else str(_Path(self.uploaded_file_path).parent)
-            pipeline = Pipeline(output_dir=output_dir, context_prompt=self.settings.get('context', ''))
+            pipeline = Pipeline(output_dir=output_dir, context_prompt=None, config=cfg)
 
             def progress_callback(step: str, current: int = 0, total: int = 100, percentage: float | None = None):
                 if self.stop_event and self.stop_event.is_set():

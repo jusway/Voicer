@@ -20,6 +20,8 @@ from .context_manager import ContextManager
 from ..utils.audio_utils import AudioConversionParams
 from .asr_router import AsrRouter
 
+from .pipeline_config import PipelineConfig
+
 
 
 class PipelineError(Exception):
@@ -32,30 +34,74 @@ class Pipeline:
 
     def __init__(self,
                  output_dir: Optional[str] = None,
-                 context_prompt: Optional[str] = None):
+                 context_prompt: Optional[str] = None,
+                     config: Optional[PipelineConfig] = None):
         """初始化Pipeline
 
         Args:
             output_dir: 输出目录
-            context_prompt: 上下文提示词
+            context_prompt: 上下文提示词（如未提供，将使用 config.context）
+            config: Pipeline 配置对象（优先于全局 settings，用于注入 provider/model/keys 等）
         """
         self.output_dir = Path(output_dir) if output_dir else None
         if self.output_dir:
             self.output_dir.mkdir(parents=True, exist_ok=True)
 
+        # 注入配置
+        self.config: Optional[PipelineConfig] = config
+
         # 初始化核心组件
         self.audio_converter = AudioConverter()
         self.vad_processor = VADProcessor()
         self.segment_manager = SegmentManager()
-        # 延迟创建：仅 DashScope 分支才需要 ASRClient
-        self.asr_client = None
         self.context_manager = ContextManager()
 
-        # 设置上下文
-        if context_prompt:
-            self.context_manager.set_scenario(context_prompt)
+        # 设置上下文（优先使用传参，其次使用 config.context）
+        effective_context = context_prompt if context_prompt is not None else (self.config.context if self.config else None)
+        if effective_context:
+            self.context_manager.set_scenario(effective_context)
 
         logger.info("Pipeline初始化完成")
+
+    # ---- Config helpers ----
+    def _get_provider(self) -> str:
+        if self.config and getattr(self.config, 'provider', None):
+            return (self.config.provider or '').lower()
+        return (settings.ASR_PROVIDER or '').lower()
+
+    def _get_model(self) -> str:
+        if self.config and getattr(self.config, 'model', None):
+            return self.config.model
+        return settings.ASR_MODEL
+
+    def _get_language(self) -> str:
+        if self.config and getattr(self.config, 'language', None):
+            return self.config.language
+        return getattr(settings, 'LANGUAGE', 'zh')
+
+    def _get_key(self, provider: str) -> str | None:
+        if self.config and getattr(self.config, 'keys', None):
+            if provider == 'siliconflow':
+                return getattr(self.config.keys, 'siliconflow', None)
+            if provider == 'dashscope':
+                return getattr(self.config.keys, 'dashscope', None)
+        # fallback to global settings
+        if provider == 'siliconflow':
+            return getattr(settings, 'SILICONFLOW_API_KEY', None)
+        if provider == 'dashscope':
+            return getattr(settings, 'DASHSCOPE_API_KEY', None)
+        return None
+
+    def _get_base_url(self, provider: str) -> str | None:
+        if self.config and getattr(self.config, 'base_urls', None):
+            if provider == 'siliconflow':
+                return getattr(self.config.base_urls, 'siliconflow', None)
+            if provider == 'dashscope':
+                return getattr(self.config.base_urls, 'dashscope', None)
+        # fallback: SiliconFlow 默认国内
+        if provider == 'siliconflow':
+            return getattr(settings, 'SILICONFLOW_BASE_URL', 'https://api.siliconflow.cn')
+        return None
 
     def process_audio_file(self, input_path: str, output_name: Optional[str] = None,
                           progress_callback: Optional[callable] = None,
@@ -109,17 +155,17 @@ class Pipeline:
             converted_path, remove_after = self._convert_audio(input_path)
 
             # 对硅基流动（SiliconFlow）使用整段识别直通分支（不经VAD/分段）
-            if settings.ASR_PROVIDER.lower() == "siliconflow":
+            if self._get_provider() == "siliconflow":
                 logger.info("步骤2: 整段识别（SiliconFlow）")
                 report_progress("整段上传/识别中...", 50, 100, 60)
 
                 router = AsrRouter(
                     provider="siliconflow",
-                    model=settings.ASR_MODEL,
-                    api_key=settings.SILICONFLOW_API_KEY,
-                    base_url=getattr(settings, "SILICONFLOW_BASE_URL", "https://api.siliconflow.cn"),
+                    model=self._get_model(),
+                    api_key=self._get_key("siliconflow"),
+                    base_url=(self._get_base_url("siliconflow") or "https://api.siliconflow.cn"),
                 )
-                res = router.recognize(converted_path, context_prompt=None, language=settings.LANGUAGE)
+                res = router.recognize(converted_path, context_prompt=None, language=self._get_language())
 
                 text_content = res.get("text", "")
                 results = [{
@@ -313,16 +359,17 @@ class Pipeline:
                 # 构建上下文提示词
                 context_prompt = self.context_manager.build_prompt()
 
-                # 通过Router调用 DashScope 后端
+                # 通过Router调用 DashScope 后端（使用注入的 config，回退到全局 settings）
                 router = AsrRouter(
                     provider="dashscope",
-                    model=settings.ASR_MODEL,
-                    api_key=settings.DASHSCOPE_API_KEY,
+                    model=self._get_model(),
+                    api_key=self._get_key("dashscope"),
+                    base_url=self._get_base_url("dashscope"),
                 )
                 result = router.recognize(
                     audio_path=segment.file_path,
                     context_prompt=context_prompt,
-                    language=settings.LANGUAGE,
+                    language=self._get_language(),
                 )
 
                 if result['success']:
@@ -422,25 +469,27 @@ class Pipeline:
             'audio_converter': self.audio_converter.get_stats() if hasattr(self.audio_converter, 'get_stats') else {},
             'vad_processor': self.vad_processor.get_stats() if hasattr(self.vad_processor, 'get_stats') else {},
             'segment_manager': self.segment_manager.get_stats(),
-            'asr_client': (self.asr_client.get_stats() if self.asr_client else {}),
             'context_manager': self.context_manager.get_stats()
         }
 
 
 def create_pipeline(output_dir: Optional[str] = None,
-                   context_prompt: Optional[str] = None) -> Pipeline:
+                   context_prompt: Optional[str] = None,
+                   config: Optional[PipelineConfig] = None) -> Pipeline:
     """创建Pipeline实例的便捷函数
 
     Args:
         output_dir: 输出目录
         context_prompt: 上下文提示词
+        config: Pipeline 配置对象
 
     Returns:
         Pipeline实例
     """
     return Pipeline(
         output_dir=output_dir,
-        context_prompt=context_prompt
+        context_prompt=context_prompt,
+        config=config,
     )
 
 
@@ -448,7 +497,8 @@ def process_audio_file(input_path: str,
                       output_dir: Optional[str] = None,
                       context_prompt: Optional[str] = None,
                       progress_callback: Optional[callable] = None,
-                      stop_event: Optional[object] = None) -> dict:
+                      stop_event: Optional[object] = None,
+                      config: Optional[PipelineConfig] = None) -> dict:
     """处理单个音频文件的便捷函数
 
     Args:
@@ -461,5 +511,5 @@ def process_audio_file(input_path: str,
     Returns:
         处理结果字典
     """
-    pipeline = create_pipeline(output_dir, context_prompt)
+    pipeline = create_pipeline(output_dir, context_prompt, config)
     return pipeline.process_audio_file(input_path, progress_callback=progress_callback, stop_event=stop_event)
