@@ -10,6 +10,7 @@ from openai import OpenAI
 from src.utils.text_diff import generate_html_diff_dmp
 from src.gui_wx.paths import CONFIG_DIR
 from src.gui_wx.dialogs.manage_presets import ManageTextPolishPresetsDialog
+from src.gui_wx.dialogs.quick_presets import QuickPresetsDialog
 
 
 class TextPolishPanel(wx.Panel):
@@ -316,6 +317,7 @@ class TextPolishPanel(wx.Panel):
             wx.MessageBox(f"保存失败: {e}", "错误", wx.OK | wx.ICON_ERROR)
 
     def on_load_saved_preset(self, event):
+        # check: ensure there are saved items before opening the quick dialog
         path = CONFIG_DIR / "wx_gui_textpolish_presets.json"
         items = []
         if path.exists():
@@ -329,73 +331,21 @@ class TextPolishPanel(wx.Panel):
         if not items:
             wx.MessageBox("暂无已保存配置", "提示", wx.OK | wx.ICON_INFORMATION)
             return
-        names = [i.get("name", "") for i in items]
-        dlg = wx.SingleChoiceDialog(self, "选择配置：", "读取已保存配置", names)
+        # Open one-layer quick dialog: double-click/Enter to load; right-click to rename/delete
+        dlg = QuickPresetsDialog(self)
         sel = None
         if dlg.ShowModal() == wx.ID_OK:
-            idx = dlg.GetSelection()
-            if 0 <= idx < len(items):
-                sel = items[idx]
+            sel = dlg.get_selected()
         dlg.Destroy()
         if not sel:
             return
-        actions = ["读取", "重命名", "删除", "取消"]
-        dlg2 = wx.SingleChoiceDialog(self, "选择操作：", "已保存配置", actions)
-        act = None
-        if dlg2.ShowModal() == wx.ID_OK:
-            idx2 = dlg2.GetSelection()
-            if 0 <= idx2 < len(actions):
-                act = actions[idx2]
-        dlg2.Destroy()
-        if not act or act == "取消":
-            return
-        path = CONFIG_DIR / "wx_gui_textpolish_presets.json"
-        items2 = []
-        if path.exists():
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    items2 = json.load(f) or []
-                if not isinstance(items2, list):
-                    items2 = []
-            except Exception:
-                items2 = []
-        name_sel = sel.get("name", "")
-        if act == "删除":
-            dlgc = wx.MessageDialog(self, f"确定删除配置“{name_sel}”吗？", "确认删除", wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING)
-            res = dlgc.ShowModal(); dlgc.Destroy()
-            if res != wx.ID_YES:
-                return
-            items2 = [i for i in items2 if i.get("name") != name_sel]
-            try:
-                with open(path, "w", encoding="utf-8") as f:
-                    json.dump(items2, f, ensure_ascii=False, indent=2)
-                wx.MessageBox("已删除", "提示")
-            except Exception as e:
-                wx.MessageBox(f"删除失败: {e}", "错误", wx.OK | wx.ICON_ERROR)
-            return
-        if act == "重命名":
-            new_name = wx.GetTextFromUser("新名称：", "重命名").strip()
-            if not new_name:
-                return
-            if new_name != name_sel and any(i.get("name") == new_name for i in items2):
-                dlgc = wx.MessageDialog(self, f"已存在同名“{new_name}”，是否覆盖？", "确认", wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION)
-                res = dlgc.ShowModal(); dlgc.Destroy()
-                if res != wx.ID_YES:
-                    return
-                items2 = [i for i in items2 if i.get("name") != new_name]
-            sel["name"] = new_name
-            items2 = [i for i in items2 if i.get("name") != name_sel]
-            items2.append(sel)
-            try:
-                with open(path, "w", encoding="utf-8") as f:
-                    json.dump(items2, f, ensure_ascii=False, indent=2)
-                wx.MessageBox("已重命名", "提示")
-            except Exception as e:
-                wx.MessageBox(f"重命名失败: {e}", "错误", wx.OK | wx.ICON_ERROR)
         try:
             self.sys_ctrl.SetValue(sel.get("system", ""))
-            temp = float(sel.get("temperature", 0.2))
-            self.temp_slider.SetValue(int(max(0, min(1, temp)) * 100))
+            try:
+                temp = float(sel.get("temperature", 0.2))
+            except Exception:
+                temp = 0.2
+            self.temp_slider.SetValue(int(max(0.0, min(1.0, temp)) * 100))
             self.temp_label.SetLabel(f"{self.temp_slider.GetValue()/100.0:.2f}")
             self._apply_history_list(sel.get("history", []))
         except Exception:
