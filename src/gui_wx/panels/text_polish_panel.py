@@ -268,6 +268,17 @@ class TextPolishPanel(wx.Panel):
                     hist.append({"role": "assistant", "text": a})
         return hist
 
+    def _normalize_openai_base_url(self, base: str) -> str:
+        """Normalize user-entered Base URL to ensure it ends with '/v1'.
+        Accepts inputs with or without trailing slash or '/v1/'.
+        Returns empty string if input is empty.
+        """
+        b = (base or "").strip().rstrip("/")
+        if not b:
+            return ""
+        return b if b.endswith("/v1") else (b + "/v1")
+
+
     def on_save_current_preset(self, event):
         try:
             name = wx.GetTextFromUser("名称：", "保存配置").strip()
@@ -399,7 +410,8 @@ class TextPolishPanel(wx.Panel):
 
 
     def on_refresh_models(self, event):
-        base_url = (self.base_url_ctrl.GetValue().strip() or "")
+        raw_base = (self.base_url_ctrl.GetValue().strip() or "")
+        base_url = self._normalize_openai_base_url(raw_base)
         key = (self.openai_api_key_ctrl.GetValue().strip() or "")
         if not base_url or not key:
             wx.MessageBox("请先填写 Base URL 与 API Key", "提示", wx.OK | wx.ICON_INFORMATION)
@@ -407,7 +419,7 @@ class TextPolishPanel(wx.Panel):
             return
         names = []
         try:
-            client = OpenAI(base_url=base_url.rstrip("/"), api_key=key)
+            client = OpenAI(base_url=base_url, api_key=key)
             resp = client.models.list()
             names = [getattr(m, "id", "") for m in getattr(resp, "data", []) if getattr(m, "id", "")]
         except Exception:
@@ -485,8 +497,9 @@ class TextPolishPanel(wx.Panel):
 
     def on_start_polish(self, event):
         base_url = self.base_url_ctrl.GetValue().strip()
+        norm_base_url = self._normalize_openai_base_url(base_url)
         key = self.openai_api_key_ctrl.GetValue().strip()
-        if not base_url or not key:
+        if not norm_base_url or not key:
             wx.MessageBox("请填写 Base URL 与 API Key", "错误", wx.OK | wx.ICON_ERROR)
             return
         if not self.input_txt_path or not _Path(self.input_txt_path).exists():
@@ -518,7 +531,7 @@ class TextPolishPanel(wx.Panel):
         def worker():
             out_chunks = []
             try:
-                client = OpenAI(base_url=base_url.rstrip("/"), api_key=key)
+                client = OpenAI(base_url=norm_base_url, api_key=key)
                 stream = client.chat.completions.create(
                     model=model,
                     messages=messages,
