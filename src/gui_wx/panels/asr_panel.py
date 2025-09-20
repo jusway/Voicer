@@ -52,22 +52,23 @@ class ASRPanel(scrolled.ScrolledPanel):
         api_box = wx.StaticBox(self, label="⚙️ API 配置")
         api_sizer = wx.StaticBoxSizer(api_box, wx.VERTICAL)
         self.api_label = wx.StaticText(self, label="阿里百炼 API Key:")
-        api_input_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        api_key_row = wx.BoxSizer(wx.HORIZONTAL)
         self.api_key_ctrl = wx.TextCtrl(self, style=wx.TE_PASSWORD)
         self.api_key_ctrl.SetToolTip("请输入阿里百炼 API Key")
         self.api_key_ctrl.Bind(wx.EVT_TEXT, self.on_api_key_change)
         self.api_status = wx.StaticText(self, label="⚠️ 请设置API Key")
-        api_sizer.Add(self.api_label, 0, wx.ALL, 5)
-        # Base URL row
+        # Base URL row（置于 KEY 之前）
         base_row = wx.BoxSizer(wx.HORIZONTAL)
         self.asr_base_url_label = wx.StaticText(self, label="Base URL:")
         base_row.Add(self.asr_base_url_label, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 5)
         self.asr_base_url_ctrl = wx.TextCtrl(self, value="")
         base_row.Add(self.asr_base_url_ctrl, 1, wx.ALL | wx.EXPAND, 5)
         api_sizer.Add(base_row, 0, wx.EXPAND)
-        api_input_sizer.Add(self.api_key_ctrl, 1, wx.ALL | wx.EXPAND, 5)
-        api_sizer.Add(api_input_sizer, 0, wx.EXPAND)
-        api_sizer.Add(self.api_status, 0, wx.ALL, 5)
+        # API Key 行（标签紧贴输入框，状态在右侧）
+        api_key_row.Add(self.api_label, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 5)
+        api_key_row.Add(self.api_key_ctrl, 1, wx.ALL | wx.EXPAND, 5)
+        api_key_row.Add(self.api_status, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 5)
+        api_sizer.Add(api_key_row, 0, wx.EXPAND)
         sizer.Add(api_sizer, 0, wx.ALL | wx.EXPAND, 10)
 
         file_box = wx.StaticBox(self, label="📁 选择音频文件")
@@ -114,7 +115,7 @@ class ASRPanel(scrolled.ScrolledPanel):
         model_sizer.Add(model_label, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 5)
         model_sizer.Add(self.model_choice, 1, wx.ALL | wx.EXPAND, 5)
 
-        api_sizer.Add(provider_sizer, 0, wx.EXPAND)
+        api_sizer.Insert(0, provider_sizer, 0, wx.EXPAND)
         api_sizer.Add(model_sizer, 0, wx.EXPAND)
 
         lang_sizer = wx.BoxSizer(wx.HORIZONTAL)
