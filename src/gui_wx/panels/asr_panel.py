@@ -47,6 +47,10 @@ class ASRPanel(scrolled.ScrolledPanel):
         self.progress_queue: queue.Queue | None = None
         self.processing_thread: threading.Thread | None = None
 
+        # Per-provider in-memory config (for 2A UX)
+        self.api_keys = {'dashscope': '', 'siliconflow': ''}
+        self.base_urls = {'siliconflow': 'https://api.siliconflow.cn'}
+
         # Build UI
         self._build_ui()
         self.load_config()
@@ -169,7 +173,9 @@ class ASRPanel(scrolled.ScrolledPanel):
 
     # ===== Event handlers & logic =====
     def on_api_key_change(self, event):
+        prov = 'siliconflow' if self.provider_choice.GetSelection() == 1 else 'dashscope'
         self.api_key = self.api_key_ctrl.GetValue()
+        self.api_keys[prov] = self.api_key
 
     def on_select_file(self, event):
         wildcard = "音频文件 (*.wav;*.mp3;*.flac;*.m4a;*.aac;*.ogg)|*.wav;*.mp3;*.flac;*.m4a;*.aac;*.ogg"
@@ -237,6 +243,12 @@ class ASRPanel(scrolled.ScrolledPanel):
                 self.context_label.Enable(True)
             if hasattr(self, "test_btn"):
                 self.test_btn.Show(False)
+        # After switching provider, auto-fill fields from per-provider memory
+        prov = 'siliconflow' if idx == 1 else 'dashscope'
+        if prov == 'siliconflow' and hasattr(self, 'asr_base_url_ctrl'):
+            self.asr_base_url_ctrl.SetValue(self.base_urls.get('siliconflow', '') or 'https://api.siliconflow.cn')
+        self.api_key_ctrl.SetValue(self.api_keys.get(prov, '') or '')
+        self.api_key = self.api_key_ctrl.GetValue()
         self.Layout()
 
 
@@ -251,10 +263,11 @@ class ASRPanel(scrolled.ScrolledPanel):
         self.vad_value_label.SetLabel(f"{value:.1f}")
 
     def on_test_api(self, event):
-        if not self.api_key:
+        prov = 'siliconflow' if self.provider_choice.GetSelection() == 1 else 'dashscope'
+        key = self.api_keys.get(prov, '') if hasattr(self, 'api_keys') else (self.api_key or '')
+        if not key:
             wx.MessageBox("请先设置API Key", "错误", wx.OK | wx.ICON_ERROR)
             return
-        prov = 'siliconflow' if self.provider_choice.GetSelection() == 1 else 'dashscope'
         if prov == 'siliconflow':
             # 规范化 Base URL
             if 'asr_base_url_ctrl' in self.__dict__:
@@ -278,7 +291,7 @@ class ASRPanel(scrolled.ScrolledPanel):
 
             def run():
                 try:
-                    r = requests.get(url, headers={"Authorization": f"Bearer {self.api_key}"}, timeout=8)
+                    r = requests.get(url, headers={"Authorization": f"Bearer {key}"}, timeout=8)
                     if r.status_code == 200:
                         try:
                             data = r.json()
@@ -311,7 +324,9 @@ class ASRPanel(scrolled.ScrolledPanel):
         if result == wx.ID_OK:
             sel = dlg.get_selected()
             if sel and sel.get('key'):
+                prov = 'siliconflow' if self.provider_choice.GetSelection() == 1 else 'dashscope'
                 self.api_key = sel['key']
+                self.api_keys[prov] = self.api_key
                 self.api_key_ctrl.SetValue(self.api_key)
         dlg.Destroy()
 
@@ -326,7 +341,9 @@ class ASRPanel(scrolled.ScrolledPanel):
         dlg.Destroy()
 
     def on_start_processing(self, event):
-        if not self.api_key:
+        prov = 'siliconflow' if self.provider_choice.GetSelection() == 1 else 'dashscope'
+        key = self.api_keys.get(prov, '') if hasattr(self, 'api_keys') else (self.api_key or '')
+        if not key:
             wx.MessageBox("请先设置API Key", "错误", wx.OK | wx.ICON_ERROR)
             return
         if not self.uploaded_file_path or not _Path(self.uploaded_file_path).exists():
@@ -378,14 +395,17 @@ class ASRPanel(scrolled.ScrolledPanel):
                         siliconflow_base = bu
                 except Exception:
                     siliconflow_base = None
+            # Persist in-memory base URL for SiliconFlow
+            if siliconflow_base:
+                self.base_urls['siliconflow'] = siliconflow_base
 
             cfg = PipelineConfig(
                 provider=provider,
                 model=self.model_choice.GetStringSelection(),
                 language=self.settings.get('language', 'zh'),
                 keys=ProviderKeys(
-                    dashscope=(self.api_key if provider == 'dashscope' else None),
-                    siliconflow=(self.api_key if provider == 'siliconflow' else None),
+                    dashscope=self.api_keys.get('dashscope'),
+                    siliconflow=self.api_keys.get('siliconflow'),
                 ),
                 base_urls=ProviderEndpoints(
                     siliconflow=siliconflow_base,
@@ -458,9 +478,15 @@ class ASRPanel(scrolled.ScrolledPanel):
             try:
                 with open(config_file, 'r', encoding='utf-8') as f:
                     config = json.load(f)
-                if 'api_key' in config:
-                    self.api_key = config['api_key'] or ""
-                    self.api_key_ctrl.SetValue(self.api_key)
+                # Load per-provider keys and base URLs (with backward compatibility)
+                prov_in_cfg = 'siliconflow' if config.get('asr_provider') == 'siliconflow' else 'dashscope'
+                if not hasattr(self, 'api_keys'):
+                    self.api_keys = {'dashscope': '', 'siliconflow': ''}
+                if not hasattr(self, 'base_urls'):
+                    self.base_urls = {'siliconflow': 'https://api.siliconflow.cn'}
+                self.api_keys['dashscope'] = config.get('ds_api_key', '') or (config.get('api_key', '') if prov_in_cfg == 'dashscope' else '')
+                self.api_keys['siliconflow'] = config.get('sf_api_key', '') or (config.get('api_key', '') if prov_in_cfg == 'siliconflow' else '')
+                self.base_urls['siliconflow'] = config.get('sf_base_url', config.get('asr_base_url', '')) or 'https://api.siliconflow.cn'
 
                 if 'language' in config:
                     lang_map = {'zh': 0, 'en': 1, 'ja': 2, 'ko': 3}
@@ -483,8 +509,7 @@ class ASRPanel(scrolled.ScrolledPanel):
                         self.model_choice.SetStringSelection(config['asr_model'])
                     except Exception:
                         pass
-                if 'asr_base_url' in config:
-                    self.asr_base_url_ctrl.SetValue(config.get('asr_base_url') or "")
+                # Base URL is applied on provider change from in-memory store
 
             except Exception as e:
                 print(f"加载配置失败: {e}")
@@ -494,10 +519,11 @@ class ASRPanel(scrolled.ScrolledPanel):
             'language': self.settings['language'],
             'vad_threshold': self.settings['vad_threshold'],
             'context': self.context_ctrl.GetValue(),
-            'api_key': self.api_key,
+            'ds_api_key': self.api_keys.get('dashscope', ''),
+            'sf_api_key': self.api_keys.get('siliconflow', ''),
+            'sf_base_url': self.base_urls.get('siliconflow', ''),
             'asr_provider': 'siliconflow' if self.provider_choice.GetSelection() == 1 else 'dashscope',
             'asr_model': self.model_choice.GetStringSelection(),
-            'asr_base_url': (self.asr_base_url_ctrl.GetValue().strip() if hasattr(self, 'asr_base_url_ctrl') else ''),
         }
         try:
             with open(CONFIG_DIR / "wx_gui_config.json", 'w', encoding='utf-8') as f:
