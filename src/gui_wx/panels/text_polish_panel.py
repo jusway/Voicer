@@ -103,14 +103,6 @@ class TextPolishPanel(wx.Panel):
         in_row.Add(self.input_label, 1, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 5)
         io_sizer.Add(in_row, 0, wx.EXPAND)
 
-        out_row = wx.BoxSizer(wx.HORIZONTAL)
-        self.output_dir_ctrl2 = wx.TextCtrl(self, value="")
-        self.output_dir_ctrl2.SetToolTip("可选：留空则默认与输入同目录，输出为 <name>.re.txt")
-        self.btn_browse_out = wx.Button(self, label="浏览输出目录")
-        self.btn_browse_out.Bind(wx.EVT_BUTTON, self.on_select_output_dir)
-        out_row.Add(self.output_dir_ctrl2, 1, wx.ALL | wx.EXPAND, 5)
-        out_row.Add(self.btn_browse_out, 0, wx.ALL, 5)
-        io_sizer.Add(out_row, 0, wx.EXPAND)
 
         vbox.Add(io_sizer, 0, wx.ALL | wx.EXPAND, 10)
 
@@ -405,12 +397,6 @@ class TextPolishPanel(wx.Panel):
             self.input_label.SetLabel(f"✅ {os.path.basename(self.input_txt_path)}")
         dlg.Destroy()
 
-    def on_select_output_dir(self, event):
-        dlg = wx.DirDialog(self, "选择输出目录")
-        if dlg.ShowModal() == wx.ID_OK:
-            self.output_dir_override = dlg.GetPath()
-            self.output_dir_ctrl2.SetValue(self.output_dir_override)
-        dlg.Destroy()
 
     def on_refresh_models(self, event):
         base_url = (self.base_url_ctrl.GetValue().strip() or "")
@@ -526,7 +512,7 @@ class TextPolishPanel(wx.Panel):
             pass
         if hasattr(self, "preview_ctrl") and self.preview_ctrl:
             self.preview_ctrl.SetValue("")
-        out_dir = self.output_dir_ctrl2.GetValue().strip() or None
+        out_dir = None
         out_path = self._build_output_path(self.input_txt_path, out_dir)
 
         def worker():

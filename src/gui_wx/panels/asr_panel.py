@@ -9,6 +9,11 @@ from pathlib import Path as _Path
 import wx
 import wx.lib.scrolledpanel as scrolled
 
+try:
+    import requests  # 用于 SiliconFlow 连通性测试
+except Exception:
+    requests = None
+
 from src.gui_wx.dialogs.progress_dialog import ProgressDialog
 from src.gui_wx.dialogs.manage_api_keys import ManageAPIKeysDialog
 from src.gui_wx.dialogs.manage_prompts import ManagePromptsDialog
@@ -67,6 +72,10 @@ class ASRPanel(scrolled.ScrolledPanel):
         # API Key 行（标签紧贴输入框，状态在右侧）
         api_key_row.Add(self.api_label, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 5)
         api_key_row.Add(self.api_key_ctrl, 1, wx.ALL | wx.EXPAND, 5)
+        self.test_btn = wx.Button(self, label="🧪 测试API")
+        self.test_btn.Bind(wx.EVT_BUTTON, self.on_test_api)
+        api_key_row.Add(self.test_btn, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 5)
+
 
         api_sizer.Add(api_key_row, 0, wx.EXPAND)
         sizer.Add(api_sizer, 0, wx.ALL | wx.EXPAND, 10)
@@ -82,18 +91,6 @@ class ASRPanel(scrolled.ScrolledPanel):
         file_sizer.Add(file_btn_sizer, 0, wx.EXPAND)
         sizer.Add(file_sizer, 0, wx.ALL | wx.EXPAND, 10)
 
-        output_box = wx.StaticBox(self, label="📂 输出目录（可选）")
-        output_sizer = wx.StaticBoxSizer(output_box, wx.VERTICAL)
-        output_btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        self.output_dir_ctrl = wx.TextCtrl(self, value="")
-        self.output_dir_ctrl.SetToolTip("可选：将结果保存到该目录；留空则默认保存到音频文件所在目录")
-        self.output_dir_ctrl.Bind(wx.EVT_TEXT, self.on_output_dir_text)
-        self.output_dir_btn = wx.Button(self, label="浏览")
-        self.output_dir_btn.Bind(wx.EVT_BUTTON, self.on_select_output_dir)
-        output_btn_sizer.Add(self.output_dir_ctrl, 1, wx.ALL | wx.EXPAND, 5)
-        output_btn_sizer.Add(self.output_dir_btn, 0, wx.ALL, 5)
-        output_sizer.Add(output_btn_sizer, 0, wx.EXPAND)
-        sizer.Add(output_sizer, 0, wx.ALL | wx.EXPAND, 10)
 
         settings_box = wx.StaticBox(self, label="⚙️ 识别设置")
         settings_sizer = wx.StaticBoxSizer(settings_box, wx.VERTICAL)
@@ -158,13 +155,10 @@ class ASRPanel(scrolled.ScrolledPanel):
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
         self.start_btn = wx.Button(self, label="🚀 开始语音识别")
         self.start_btn.Bind(wx.EVT_BUTTON, self.on_start_processing)
-        self.test_btn = wx.Button(self, label="🧪 测试API")
-        self.test_btn.Bind(wx.EVT_BUTTON, self.on_test_api)
         self.open_output_btn = wx.Button(self, label="📂 打开输出目录")
         self.open_output_btn.Bind(wx.EVT_BUTTON, self.on_open_output_dir)
         self.open_output_btn.Enable(False)
         btn_sizer.Add(self.start_btn, 1, wx.ALL, 5)
-        btn_sizer.Add(self.test_btn, 0, wx.ALL, 5)
         btn_sizer.Add(self.open_output_btn, 0, wx.ALL, 5)
         sizer.Add(btn_sizer, 0, wx.ALL | wx.EXPAND, 10)
 
@@ -204,6 +198,8 @@ class ASRPanel(scrolled.ScrolledPanel):
                 self.vad_slider.Enable(False)
             if hasattr(self, "vad_value_label"):
                 self.vad_value_label.Enable(False)
+            if hasattr(self, "test_btn"):
+                self.test_btn.Show(True)
         else:  # DashScope
             self.model_choice.Set(self.DS_MODELS)
             self.model_choice.SetSelection(0)
@@ -217,17 +213,11 @@ class ASRPanel(scrolled.ScrolledPanel):
                 self.vad_slider.Enable(True)
             if hasattr(self, "vad_value_label"):
                 self.vad_value_label.Enable(True)
+            if hasattr(self, "test_btn"):
+                self.test_btn.Show(False)
         self.Layout()
 
-    def on_select_output_dir(self, event):
-        dlg = wx.DirDialog(self, "选择输出目录")
-        if dlg.ShowModal() == wx.ID_OK:
-            self.output_dir_override = dlg.GetPath()
-            self.output_dir_ctrl.SetValue(self.output_dir_override)
-        dlg.Destroy()
 
-    def on_output_dir_text(self, event):
-        self.output_dir_override = self.output_dir_ctrl.GetValue().strip()
 
     def on_language_change(self, event):
         lang_map = {0: 'zh', 1: 'en', 2: 'ja', 3: 'ko'}
@@ -243,25 +233,53 @@ class ASRPanel(scrolled.ScrolledPanel):
             wx.MessageBox("请先设置API Key", "错误", wx.OK | wx.ICON_ERROR)
             return
         prov = 'siliconflow' if self.provider_choice.GetSelection() == 1 else 'dashscope'
-        if prov == 'siliconflow' and (not self.asr_base_url_ctrl.GetValue().strip()):
-            wx.MessageBox("请设置 SiliconFlow 的 Base URL", "提示", wx.OK | wx.ICON_WARNING)
-            return
-        try:
-            base_dir = _Path(__file__).resolve().parents[2]  # src/gui_wx/panels -> src
-            test_audio = base_dir / 'test_audio' / 'test.m4a'
-        except Exception:
-            test_audio = None
-        if not test_audio or not test_audio.exists():
-            wx.MessageBox("未找到测试音频：src/test_audio/test.m4a", "错误", wx.OK | wx.ICON_ERROR)
-            return
-        self.uploaded_file_path = str(test_audio)
-        filename = test_audio.name
-        try:
-            size_mb = test_audio.stat().st_size / 1024 / 1024
-        except Exception:
-            size_mb = 0
-        self.file_label.SetLabel(f"✅ {filename} ({size_mb:.1f} MB)")
-        self.on_start_processing(None)
+        if prov == 'siliconflow':
+            # 规范化 Base URL
+            if 'asr_base_url_ctrl' in self.__dict__:
+                base = (self.asr_base_url_ctrl.GetValue().strip() or "https://api.siliconflow.cn").rstrip('/')
+            else:
+                base = "https://api.siliconflow.cn"
+            if base.endswith('/v1'):
+                base = base[:-3]
+            url = f"{base}/v1/models"
+
+            # 依赖 requests；缺失时给出提示
+            if requests is None:
+                wx.MessageBox("requests 库未安装，无法进行连通性测试", "错误", wx.OK | wx.ICON_ERROR)
+                self.status_text.SetLabel("测试失败：缺少 requests")
+                return
+
+            # 更新 UI 状态并后台执行
+            self.test_btn.Enable(False)
+            self.test_btn.SetLabel("测试中…")
+            self.status_text.SetLabel("测试中…")
+
+            def run():
+                try:
+                    r = requests.get(url, headers={"Authorization": f"Bearer {self.api_key}"}, timeout=8)
+                    if r.status_code == 200:
+                        try:
+                            data = r.json()
+                            cnt = len(data.get("data", [])) if isinstance(data, dict) else None
+                        except Exception:
+                            cnt = None
+                        wx.CallAfter(self.status_text.SetLabel, "连通正常")
+                        msg = f"✅ 连通正常{f'（{cnt} 个模型）' if cnt is not None else ''}"
+                        wx.CallAfter(wx.MessageBox, msg, "测试API", wx.OK | wx.ICON_INFORMATION)
+                    else:
+                        wx.CallAfter(self.status_text.SetLabel, "测试失败")
+                        wx.CallAfter(wx.MessageBox, f"❌ {r.status_code}: {r.text[:200]}", "测试API", wx.OK | wx.ICON_ERROR)
+                except Exception as e:
+                    wx.CallAfter(self.status_text.SetLabel, "测试失败")
+                    wx.CallAfter(wx.MessageBox, f"请求失败: {e}", "测试API", wx.OK | wx.ICON_ERROR)
+                finally:
+                    wx.CallAfter(self.test_btn.SetLabel, "🧪 测试API")
+                    wx.CallAfter(self.test_btn.Enable, True)
+
+            threading.Thread(target=run, daemon=True).start()
+        else:
+            wx.MessageBox("DashScope 暂无连通性测试，请直接用音频执行一次识别验证。", "提示", wx.OK | wx.ICON_INFORMATION)
+            self.status_text.SetLabel("已提示：DashScope 无测试接口")
 
 
 
@@ -300,15 +318,6 @@ class ASRPanel(scrolled.ScrolledPanel):
         self.start_btn.Enable(False)
         self.status_text.SetLabel("正在处理...")
 
-        # Text field output dir
-        text_path = self.output_dir_ctrl.GetValue().strip()
-        if text_path:
-            p = _Path(text_path)
-            if p.exists() and p.is_dir():
-                self.output_dir_override = str(p)
-            else:
-                wx.MessageBox("输出目录不存在或不可用，将使用默认目录（音频所在目录）", "提示", wx.OK | wx.ICON_WARNING)
-                self.output_dir_override = ""
 
         progress_dlg = ProgressDialog(self)
         self.stop_event = threading.Event()
@@ -423,9 +432,6 @@ class ASRPanel(scrolled.ScrolledPanel):
                     self.api_key = config['api_key'] or ""
                     self.api_key_ctrl.SetValue(self.api_key)
 
-                if 'output_dir' in config:
-                    self.output_dir_override = config['output_dir']
-                    self.output_dir_ctrl.SetValue(self.output_dir_override)
                 if 'language' in config:
                     lang_map = {'zh': 0, 'en': 1, 'ja': 2, 'ko': 3}
                     if config['language'] in lang_map:
@@ -455,7 +461,6 @@ class ASRPanel(scrolled.ScrolledPanel):
 
     def save_config(self):
         config = {
-            'output_dir': self.output_dir_override,
             'language': self.settings['language'],
             'vad_threshold': self.settings['vad_threshold'],
             'context': self.context_ctrl.GetValue(),
