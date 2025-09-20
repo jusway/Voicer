@@ -56,7 +56,7 @@ class ASRPanel(scrolled.ScrolledPanel):
         self.api_key_ctrl = wx.TextCtrl(self, style=wx.TE_PASSWORD)
         self.api_key_ctrl.SetToolTip("请输入阿里百炼 API Key")
         self.api_key_ctrl.Bind(wx.EVT_TEXT, self.on_api_key_change)
-        self.api_status = wx.StaticText(self, label="⚠️ 请设置API Key")
+
         # Base URL row（置于 KEY 之前）
         base_row = wx.BoxSizer(wx.HORIZONTAL)
         self.asr_base_url_label = wx.StaticText(self, label="Base URL:")
@@ -67,7 +67,7 @@ class ASRPanel(scrolled.ScrolledPanel):
         # API Key 行（标签紧贴输入框，状态在右侧）
         api_key_row.Add(self.api_label, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 5)
         api_key_row.Add(self.api_key_ctrl, 1, wx.ALL | wx.EXPAND, 5)
-        api_key_row.Add(self.api_status, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 5)
+
         api_sizer.Add(api_key_row, 0, wx.EXPAND)
         sizer.Add(api_sizer, 0, wx.ALL | wx.EXPAND, 10)
 
@@ -176,12 +176,6 @@ class ASRPanel(scrolled.ScrolledPanel):
     # ===== Event handlers & logic =====
     def on_api_key_change(self, event):
         self.api_key = self.api_key_ctrl.GetValue()
-        if self.api_key:
-            self.api_status.SetLabel("✅ API Key已设置")
-            self.api_status.SetForegroundColour(wx.Colour(0, 128, 0))
-        else:
-            self.api_status.SetLabel("⚠️ 请设置API Key")
-            self.api_status.SetForegroundColour(wx.Colour(255, 140, 0))
 
     def on_select_file(self, event):
         wildcard = "音频文件 (*.wav;*.mp3;*.flac;*.m4a;*.aac;*.ogg)|*.wav;*.mp3;*.flac;*.m4a;*.aac;*.ogg"
@@ -279,8 +273,6 @@ class ASRPanel(scrolled.ScrolledPanel):
             if sel and sel.get('key'):
                 self.api_key = sel['key']
                 self.api_key_ctrl.SetValue(self.api_key)
-                self.api_status.SetLabel("✅ API Key已设置")
-                self.api_status.SetForegroundColour(wx.Colour(0, 128, 0))
         dlg.Destroy()
 
     def on_manage_prompts(self, event):
@@ -430,9 +422,6 @@ class ASRPanel(scrolled.ScrolledPanel):
                 if 'api_key' in config:
                     self.api_key = config['api_key'] or ""
                     self.api_key_ctrl.SetValue(self.api_key)
-                    if self.api_key:
-                        self.api_status.SetLabel("✅ API Key已设置")
-                        self.api_status.SetForegroundColour(wx.Colour(0, 128, 0))
 
                 if 'output_dir' in config:
                     self.output_dir_override = config['output_dir']
