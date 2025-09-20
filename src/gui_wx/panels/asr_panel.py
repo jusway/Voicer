@@ -118,12 +118,12 @@ class ASRPanel(scrolled.ScrolledPanel):
         lang_sizer = wx.BoxSizer(wx.HORIZONTAL)
         self.on_provider_change(None)
 
-        lang_label = wx.StaticText(self, label="识别语言:")
+        self.lang_label = wx.StaticText(self, label="识别语言:")
         self.lang_choice = wx.Choice(self, choices=["🇨🇳 中文", "🇺🇸 英文", "🇯🇵 日文", "🇰🇷 韩文"])
         self.lang_choice.SetSelection(0)
         self.lang_choice.SetToolTip("选择音频的主要语言")
         self.lang_choice.Bind(wx.EVT_CHOICE, self.on_language_change)
-        lang_sizer.Add(lang_label, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 5)
+        lang_sizer.Add(self.lang_label, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 5)
         lang_sizer.Add(self.lang_choice, 1, wx.ALL, 5)
 
         vad_sizer = wx.BoxSizer(wx.HORIZONTAL)
@@ -136,7 +136,7 @@ class ASRPanel(scrolled.ScrolledPanel):
         vad_sizer.Add(self.vad_slider, 1, wx.ALL, 5)
         vad_sizer.Add(self.vad_value_label, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 5)
 
-        context_label = wx.StaticText(self, label="上下文提示（可选）:")
+        self.context_label = wx.StaticText(self, label="上下文提示（可选）:")
         context_input_sizer = wx.BoxSizer(wx.HORIZONTAL)
         self.context_ctrl = wx.TextCtrl(self, style=wx.TE_MULTILINE, size=(-1, 80))
         self.context_ctrl.SetToolTip("描述音频内容的场景信息，如：会议录音、电话客服等")
@@ -145,7 +145,7 @@ class ASRPanel(scrolled.ScrolledPanel):
 
         settings_sizer.Add(lang_sizer, 0, wx.EXPAND)
         settings_sizer.Add(vad_sizer, 0, wx.EXPAND)
-        settings_sizer.Add(context_label, 0, wx.ALL, 5)
+        settings_sizer.Add(self.context_label, 0, wx.ALL, 5)
         context_input_sizer.Add(self.context_ctrl, 1, wx.ALL | wx.EXPAND, 5)
         context_input_sizer.Add(self.manage_prompts_btn, 0, wx.ALL, 5)
         settings_sizer.Add(context_input_sizer, 0, wx.EXPAND)
@@ -198,6 +198,17 @@ class ASRPanel(scrolled.ScrolledPanel):
                 self.vad_slider.Enable(False)
             if hasattr(self, "vad_value_label"):
                 self.vad_value_label.Enable(False)
+            # Disable unsupported settings for SiliconFlow
+            if hasattr(self, "lang_choice"):
+                self.lang_choice.Enable(False)
+            if hasattr(self, "lang_label"):
+                self.lang_label.Enable(False)
+            if hasattr(self, "context_ctrl"):
+                self.context_ctrl.Enable(False)
+            if hasattr(self, "manage_prompts_btn"):
+                self.manage_prompts_btn.Enable(False)
+            if hasattr(self, "context_label"):
+                self.context_label.Enable(False)
             if hasattr(self, "test_btn"):
                 self.test_btn.Show(True)
         else:  # DashScope
@@ -213,6 +224,17 @@ class ASRPanel(scrolled.ScrolledPanel):
                 self.vad_slider.Enable(True)
             if hasattr(self, "vad_value_label"):
                 self.vad_value_label.Enable(True)
+            # Re-enable settings for DashScope
+            if hasattr(self, "lang_choice"):
+                self.lang_choice.Enable(True)
+            if hasattr(self, "lang_label"):
+                self.lang_label.Enable(True)
+            if hasattr(self, "context_ctrl"):
+                self.context_ctrl.Enable(True)
+            if hasattr(self, "manage_prompts_btn"):
+                self.manage_prompts_btn.Enable(True)
+            if hasattr(self, "context_label"):
+                self.context_label.Enable(True)
             if hasattr(self, "test_btn"):
                 self.test_btn.Show(False)
         self.Layout()
@@ -264,7 +286,7 @@ class ASRPanel(scrolled.ScrolledPanel):
                         except Exception:
                             cnt = None
                         wx.CallAfter(self.status_text.SetLabel, "连通正常")
-                        msg = f"✅ 连通正常{f'（{cnt} 个模型）' if cnt is not None else ''}"
+                        msg = f"✅ 连通正常{f'（API有{cnt}个模型）' if cnt is not None else ''}"
                         wx.CallAfter(wx.MessageBox, msg, "测试API", wx.OK | wx.ICON_INFORMATION)
                     else:
                         wx.CallAfter(self.status_text.SetLabel, "测试失败")
