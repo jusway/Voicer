@@ -456,6 +456,10 @@ class TextPolishPanel(wx.Panel):
             wx.MessageBox("请先选择有效的 txt 文件", "错误", wx.OK | wx.ICON_ERROR)
             return
         model = self.model_choice.GetStringSelection() or ""
+        if not model or model.startswith("<"):
+            wx.MessageBox("请选择有效模型", "错误", wx.OK | wx.ICON_ERROR)
+            return
+
         temperature = self.temp_slider.GetValue() / 100.0
         sys_inst = self.sys_ctrl.GetValue().strip() or None
         try:
@@ -521,13 +525,13 @@ class TextPolishPanel(wx.Panel):
                             f"✅ 完成，已输出：\n{out_path}\n\n并生成差异浏览：\n{diff_path}",
                             "成功", wx.OK | wx.ICON_INFORMATION))
                     except Exception as ediff:
-                        wx.CallAfter(lambda: wx.MessageBox(
-                            f"✅ 文本已输出，但生成差异浏览失败：{ediff}\n\n输出：{out_path}",
-                            "部分成功", wx.OK | wx.ICON_WARNING))
+                        wx.CallAfter(wx.MessageBox,
+                                     f"✅ 文本已输出，但生成差异浏览失败：{ediff}\n\n输出：{out_path}",
+                                     "部分成功", wx.OK | wx.ICON_WARNING)
                 except Exception as e2:
-                    wx.CallAfter(lambda: wx.MessageBox(f"写出失败: {e2}", "错误", wx.OK | wx.ICON_ERROR))
+                    wx.CallAfter(wx.MessageBox, f"写出失败: {e2}", "错误", wx.OK | wx.ICON_ERROR)
             except Exception as e:
-                wx.CallAfter(lambda: wx.MessageBox(f"调用模型失败: {e}", "错误", wx.OK | wx.ICON_ERROR))
+                wx.CallAfter(wx.MessageBox, f"调用模型失败: {e}", "错误", wx.OK | wx.ICON_ERROR)
             finally:
                 wx.CallAfter(lambda: self.run_btn.Enable(True))
 
