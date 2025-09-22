@@ -12,6 +12,10 @@ from src.gui_wx.paths import CONFIG_DIR
 from src.gui_wx.dialogs.manage_presets import ManageTextPolishPresetsDialog
 from src.gui_wx.dialogs.quick_presets import QuickPresetsDialog
 
+import multiprocessing as mp
+import queue
+from src.workers.text_polish_worker import run_text_polish_worker
+
 
 class TextPolishPanel(wx.Panel):
     """
@@ -29,6 +33,15 @@ class TextPolishPanel(wx.Panel):
         self.output_dir_override = ""
         self.current_system_instruction = None
         self._saved_model_name = None
+
+        # 运行状态与取消控制
+        self.is_running = False
+
+        self.proc = None
+        self.mp_queue = None
+        self.reader_thread = None
+        self.reader_stop = False
+        self.buffer_chunks = []
 
         vbox = wx.BoxSizer(wx.VERTICAL)
 
@@ -130,7 +143,7 @@ class TextPolishPanel(wx.Panel):
 
         # 开始按钮
         self.run_btn = wx.Button(self, label="🚀 开始文本规范")
-        self.run_btn.Bind(wx.EVT_BUTTON, self.on_start_polish)
+        self.run_btn.Bind(wx.EVT_BUTTON, self.on_run_or_cancel)
         vbox.Add(self.run_btn, 0, wx.ALL | wx.ALIGN_RIGHT, 10)
 
         self.SetSizer(vbox)
@@ -440,10 +453,104 @@ class TextPolishPanel(wx.Panel):
                 pass
 
     # ---------- 运行 ----------
+    def _read_queue_loop(self):
+        while not self.reader_stop:
+            try:
+                msg = self.mp_queue.get(timeout=0.2)
+            except Exception:
+                continue
+            t = (msg.get("type") if isinstance(msg, dict) else None)
+            if t == "delta":
+                d = msg.get("text", "")
+                self.buffer_chunks.append(d)
+                wx.CallAfter(self.preview_ctrl.AppendText, d)
+            elif t == "done":
+                wx.CallAfter(self._on_worker_done)
+                break
+            elif t == "error":
+                wx.CallAfter(lambda: wx.MessageBox(msg.get("message", "失败"), "错误"))
+                break
+
+    def _on_worker_done(self):
+        out_text = "".join(self.buffer_chunks)
+        try:
+            p_out = _Path(self._pending_out_path)
+            p_out.parent.mkdir(parents=True, exist_ok=True)
+            p_out.write_text(out_text, encoding="utf-8")
+            p_in = _Path(self._pending_in_path)
+            d_dir = p_in.parent
+            diff_path = str(d_dir / f"{p_in.stem}(差异浏览).html")
+            generate_html_diff_dmp(
+                file1_path=str(p_in),
+                file2_path=str(p_out),
+                output_path=diff_path,
+                fromdesc=p_in.name,
+                todesc=p_out.name,
+                cleanup='none',
+                use_line_mode=False,
+            )
+            wx.MessageBox(f"✅ 完成，已输出：\n{p_out}\n\n并生成差异浏览：\n{diff_path}", "成功")
+        except Exception as e:
+            wx.MessageBox(f"输出或差异失败：{e}", "错误")
+        finally:
+            self.is_running = False
+            self.run_btn.SetLabel("🚀 开始文本规范")
+            self.run_btn.Enable(True)
+
+    def _drain_queue(self):
+        if not self.mp_queue:
+            return
+        while True:
+            try:
+                self.mp_queue.get_nowait()
+            except queue.Empty:
+                break
+            except Exception:
+                break
+
     def _build_output_path(self, in_path: str, out_dir: str | None) -> str:
         p = _Path(in_path)
         d = _Path(out_dir) if out_dir else p.parent
         return str(d / f"{p.stem}(校对后).txt")
+
+    def on_run_or_cancel(self, event):
+        if getattr(self, "is_running", False):
+            dlg = wx.MessageDialog(self, "确认要取消生成吗？", "确认", wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION)
+            res = dlg.ShowModal()
+            dlg.Destroy()
+            if res == wx.ID_YES:
+                # 进程级硬取消：立即反馈 UI，终止子进程并清理队列
+                try:
+                    self.run_btn.SetLabel("⏳ 取消中…")
+                    self.run_btn.Enable(False)
+                except Exception:
+                    pass
+                self.reader_stop = True
+                try:
+                    if hasattr(self, "preview_ctrl") and self.preview_ctrl:
+                        self.preview_ctrl.SetValue("")
+                except Exception:
+                    pass
+                try:
+                    if getattr(self, "proc", None) and self.proc.is_alive():
+                        self.proc.terminate()
+                        self.proc.join(timeout=1.5)
+                        if self.proc.is_alive():
+                            self.proc.kill()
+                except Exception:
+                    pass
+                try:
+                    self._drain_queue()
+                except Exception:
+                    pass
+                self.is_running = False
+                try:
+                    self.run_btn.SetLabel("🚀 开始文本规范")
+                    self.run_btn.Enable(True)
+                except Exception:
+                    pass
+        else:
+            self.on_start_polish(event)
 
     def on_start_polish(self, event):
         base_url = self.base_url_ctrl.GetValue().strip()
@@ -473,8 +580,11 @@ class TextPolishPanel(wx.Panel):
             messages.append({"role": "system", "content": sys_inst})
         messages.extend(self._get_history_messages_from_pairs())
         messages.append({"role": "user", "content": file_text})
+
+        # 切换到运行状态，并清空预览
+        self.is_running = True
         try:
-            self.run_btn.Enable(False)
+            self.run_btn.SetLabel("⏹ 取消生成")
         except Exception:
             pass
         if hasattr(self, "preview_ctrl") and self.preview_ctrl:
@@ -482,59 +592,18 @@ class TextPolishPanel(wx.Panel):
         out_dir = None
         out_path = self._build_output_path(self.input_txt_path, out_dir)
 
-        def worker():
-            out_chunks = []
-            try:
-                client = OpenAI(base_url=norm_base_url, api_key=key)
-                stream = client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    temperature=temperature,
-                    stream=True,
-                    timeout=60,
-                )
-                for chunk in stream:
-                    try:
-                        delta = getattr(chunk.choices[0].delta, "content", None)
-                    except Exception:
-                        delta = None
-                    if delta:
-                        out_chunks.append(delta)
-                        if hasattr(self, "preview_ctrl") and self.preview_ctrl:
-                            wx.CallAfter(self.preview_ctrl.AppendText, delta)
-                out_text = "".join(out_chunks)
-                try:
-                    _Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-                    with open(out_path, "w", encoding="utf-8") as f:
-                        f.write(out_text)
-                    in_path = self.input_txt_path
-                    p_in = _Path(in_path)
-                    d_dir = _Path(out_dir) if out_dir else p_in.parent
-                    diff_path = str(d_dir / f"{p_in.stem}(差异浏览).html")
-                    try:
-                        generate_html_diff_dmp(
-                            file1_path=str(p_in),
-                            file2_path=str(out_path),
-                            output_path=diff_path,
-                            fromdesc=p_in.name,
-                            todesc=_Path(out_path).name,
-                            cleanup='none',
-                            use_line_mode=False,
-                        )
-                        wx.CallAfter(lambda: wx.MessageBox(
-                            f"✅ 完成，已输出：\n{out_path}\n\n并生成差异浏览：\n{diff_path}",
-                            "成功", wx.OK | wx.ICON_INFORMATION))
-                    except Exception as ediff:
-                        wx.CallAfter(wx.MessageBox,
-                                     f"✅ 文本已输出，但生成差异浏览失败：{ediff}\n\n输出：{out_path}",
-                                     "部分成功", wx.OK | wx.ICON_WARNING)
-                except Exception as e2:
-                    wx.CallAfter(wx.MessageBox, f"写出失败: {e2}", "错误", wx.OK | wx.ICON_ERROR)
-            except Exception as e:
-                wx.CallAfter(wx.MessageBox, f"调用模型失败: {e}", "错误", wx.OK | wx.ICON_ERROR)
-            finally:
-                wx.CallAfter(lambda: self.run_btn.Enable(True))
-
-        threading.Thread(target=worker, daemon=True).start()
+        # Start subprocess worker and a queue reader thread
+        self.reader_stop = False
+        self.buffer_chunks = []
+        self._pending_out_path = out_path
+        self._pending_in_path = self.input_txt_path
+        self.mp_queue = mp.Queue(maxsize=1000)
+        self.proc = mp.Process(
+            target=run_text_polish_worker,
+            args=(norm_base_url, key, model, messages, temperature, self.mp_queue),
+        )
+        self.proc.start()
+        self.reader_thread = threading.Thread(target=self._read_queue_loop, daemon=True)
+        self.reader_thread.start()
         return
 
