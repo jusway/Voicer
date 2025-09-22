@@ -13,5 +13,7 @@ from src.utils.external import ensure_external
 
 
 if __name__ == "__main__":
+    from multiprocessing import freeze_support
+    freeze_support()  # Critical for PyInstaller + Windows multiprocessing
     ensure_external()
     main()
