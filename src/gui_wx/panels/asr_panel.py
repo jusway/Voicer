@@ -8,6 +8,7 @@ from pathlib import Path as _Path
 
 import wx
 import wx.lib.scrolledpanel as scrolled
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
     import requests  # 用于 SiliconFlow 连通性测试
@@ -36,8 +37,8 @@ class ASRPanel(scrolled.ScrolledPanel):
 
         # State
         self.api_key: str = ""
-        self.uploaded_file_path: str = ""
-        self.output_dir_override: str = ""
+        self.selected_files: list[str] = []  # 支持多选，自然批量
+        self.output_dir_override: str = ""  # 若留空，Pipeline 默认写回各自原目录
         self.settings: dict = {
             'language': 'zh',
             'context': '',
@@ -46,6 +47,9 @@ class ASRPanel(scrolled.ScrolledPanel):
         self.stop_event: threading.Event | None = None
         self.progress_queue: queue.Queue | None = None
         self.processing_thread: threading.Thread | None = None
+        self.executor: ThreadPoolExecutor | None = None  # 控制并发 ≤ 5
+        self._pct_map: dict[str, float] = {}
+        self._pct_lock = threading.Lock()
 
         # Per-provider in-memory config (for 2A UX)
         self.api_keys = {'dashscope': '', 'siliconflow': ''}
@@ -178,13 +182,17 @@ class ASRPanel(scrolled.ScrolledPanel):
         self.api_keys[prov] = self.api_key
 
     def on_select_file(self, event):
-        wildcard = "音频文件 (*.wav;*.mp3;*.flac;*.m4a;*.aac;*.ogg)|*.wav;*.mp3;*.flac;*.m4a;*.aac;*.ogg"
-        dlg = wx.FileDialog(self, "选择音频文件", wildcard=wildcard, style=wx.FD_OPEN)
+        wildcard = "音频文件 (*.wav;*.mp3;*.flac;*.m4a;*.aac;*.ogg;*.opus)|*.wav;*.mp3;*.flac;*.m4a;*.aac;*.ogg;*.opus"
+        dlg = wx.FileDialog(self, "选择音频文件(可多选)", wildcard=wildcard, style=wx.FD_OPEN | wx.FD_MULTIPLE)
         if dlg.ShowModal() == wx.ID_OK:
-            self.uploaded_file_path = dlg.GetPath()
-            filename = _Path(self.uploaded_file_path).name
-            size_mb = _Path(self.uploaded_file_path).stat().st_size / 1024 / 1024
-            self.file_label.SetLabel(f"✅ {filename} ({size_mb:.1f} MB)")
+            self.selected_files = dlg.GetPaths()
+            count = len(self.selected_files)
+            if count == 1:
+                p = _Path(self.selected_files[0])
+                size_mb = p.stat().st_size / 1024 / 1024
+                self.file_label.SetLabel(f"✅ {p.name} ({size_mb:.1f} MB)")
+            else:
+                self.file_label.SetLabel(f"✅ 已选择 {count} 个文件")
         dlg.Destroy()
 
     def on_provider_change(self, event):
@@ -346,8 +354,13 @@ class ASRPanel(scrolled.ScrolledPanel):
         if not key:
             wx.MessageBox("请先设置API Key", "错误", wx.OK | wx.ICON_ERROR)
             return
-        if not self.uploaded_file_path or not _Path(self.uploaded_file_path).exists():
-            wx.MessageBox("请先选择有效的音频文件", "错误", wx.OK | wx.ICON_ERROR)
+        if not self.selected_files:
+            wx.MessageBox("请先选择一个或多个音频文件", "错误", wx.OK | wx.ICON_ERROR)
+            return
+        # 过滤掉不存在的文件
+        files = [f for f in self.selected_files if _Path(f).exists()]
+        if not files:
+            wx.MessageBox("未找到有效文件", "错误", wx.OK | wx.ICON_ERROR)
             return
         if not HAS_CORE_MODULES:
             wx.MessageBox("核心模块未加载，无法进行处理", "错误", wx.OK | wx.ICON_ERROR)
@@ -357,17 +370,24 @@ class ASRPanel(scrolled.ScrolledPanel):
         self.start_btn.Enable(False)
         self.status_text.SetLabel("正在处理...")
 
-
         progress_dlg = ProgressDialog(self)
         self.stop_event = threading.Event()
         self.progress_queue = queue.Queue()
         progress_dlg.set_stop_event(self.stop_event)
 
-        self.processing_thread = threading.Thread(target=self.process_audio_background, args=(progress_dlg,), daemon=True)
+        # 启动并行批处理线程
+        self.processing_thread = threading.Thread(target=self.process_files_parallel, args=(files, progress_dlg), daemon=True)
         self.processing_thread.start()
 
         result = progress_dlg.ShowModal()
         progress_dlg.Destroy()
+
+        # 停止后尽量取消排队任务
+        try:
+            if self.executor:
+                self.executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
 
         self.start_btn.Enable(True)
 
@@ -378,6 +398,95 @@ class ASRPanel(scrolled.ScrolledPanel):
             wx.MessageBox("⏹️ 处理已停止", "提示", wx.OK | wx.ICON_WARNING)
         else:
             self.status_text.SetLabel("就绪")
+
+    def _build_pipeline_config(self) -> PipelineConfig:
+        # 构造 Pipeline 配置（依赖注入，避免写全局）
+        provider = 'siliconflow' if self.provider_choice.GetSelection() == 1 else 'dashscope'
+        # SiliconFlow Base URL（可选）
+        siliconflow_base = None
+        if provider == 'siliconflow' and hasattr(self, 'asr_base_url_ctrl'):
+            try:
+                bu = (self.asr_base_url_ctrl.GetValue().strip() or "")
+                if bu:
+                    bu = bu.rstrip('/')
+                    if bu.endswith('/v1'):
+                        bu = bu[:-3]
+                    siliconflow_base = bu
+            except Exception:
+                siliconflow_base = None
+        # Persist in-memory base URL for SiliconFlow
+        if siliconflow_base:
+            self.base_urls['siliconflow'] = siliconflow_base
+
+        cfg = PipelineConfig(
+            provider=provider,
+            model=self.model_choice.GetStringSelection(),
+            language=self.settings.get('language', 'zh'),
+            keys=ProviderKeys(
+                dashscope=self.api_keys.get('dashscope'),
+                siliconflow=self.api_keys.get('siliconflow'),
+            ),
+            base_urls=ProviderEndpoints(
+                siliconflow=siliconflow_base,
+            ),
+            vad_threshold=self.settings.get('vad_threshold', 0.5),
+            context=self.settings.get('context', ''),
+        )
+        return cfg
+
+    def _update_overall_progress(self, file_path: str, pct: float, label: str, progress_dlg: ProgressDialog):
+        try:
+            with self._pct_lock:
+                self._pct_map[file_path] = float(pct)
+                total_files = max(1, len(self._pct_map) if self.selected_files is None else len(self.selected_files) or len(self._pct_map))
+                overall = sum(self._pct_map.values()) / total_files
+            progress_dlg.update_progress(label, overall)
+        except Exception:
+            pass
+
+    def _run_one_file(self, path: str, cfg: PipelineConfig, progress_dlg: ProgressDialog):
+        name = _Path(path).name
+
+        def cb(step: str, cur: int, tot: int, pct: float):
+            self._update_overall_progress(path, pct or 0.0, f"[{name}] {step}", progress_dlg)
+            # 早停
+            if self.stop_event and self.stop_event.is_set():
+                return
+
+        pipeline = Pipeline(output_dir=None, context_prompt=None, config=cfg)
+        try:
+            pipeline.process_audio_file(
+                input_path=path,
+                progress_callback=cb,
+                stop_event=self.stop_event,
+            )
+            self._update_overall_progress(path, 100.0, f"[{name}] 完成", progress_dlg)
+        except Exception as e:
+            self._update_overall_progress(path, 100.0, f"[{name}] 失败: {e}", progress_dlg)
+
+    def process_files_parallel(self, files: list[str], progress_dlg: ProgressDialog):
+        try:
+            cfg = self._build_pipeline_config()
+            # 初始化进度映射
+            with self._pct_lock:
+                self._pct_map = {f: 0.0 for f in files}
+
+            max_workers = min(5, len(files)) if files else 1
+            with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                self.executor = ex
+                futures = [ex.submit(self._run_one_file, p, cfg, progress_dlg) for p in files]
+                for _ in as_completed(futures):
+                    if self.stop_event and self.stop_event.is_set():
+                        break
+
+            # 根据停止状态结束对话框
+            if self.stop_event and self.stop_event.is_set():
+                wx.CallAfter(progress_dlg.EndModal, wx.ID_CANCEL)
+            else:
+                wx.CallAfter(progress_dlg.EndModal, wx.ID_OK)
+        except Exception as e:
+            wx.CallAfter(wx.MessageBox, f"处理失败: {e}", "错误", wx.OK | wx.ICON_ERROR)
+            wx.CallAfter(progress_dlg.EndModal, wx.ID_CANCEL)
 
     def process_audio_background(self, progress_dlg: ProgressDialog):
         try:
@@ -452,10 +561,23 @@ class ASRPanel(scrolled.ScrolledPanel):
         dlg = wx.MessageDialog(self, message, "处理完成", wx.OK | wx.ICON_INFORMATION)
         dlg.ShowModal()
         dlg.Destroy()
-        self.open_output_btn.Enable(True)
+        # 仅在选择了单个文件时才提供“打开输出目录”
+        try:
+            single = isinstance(self.selected_files, list) and len(self.selected_files) == 1
+        except Exception:
+            single = False
+        self.open_output_btn.Enable(bool(single))
 
     def on_open_output_dir(self, event):
-        output_dir = self.output_dir_override if self.output_dir_override else str(_Path(self.uploaded_file_path).parent)
+        try:
+            # 仅支持单文件快捷打开；多文件请自行到各自目录查看
+            if not (self.selected_files and len(self.selected_files) == 1):
+                wx.MessageBox("批量处理暂无统一输出目录，请到各自原目录查看。", "提示", wx.OK | wx.ICON_INFORMATION)
+                return
+            p = _Path(self.selected_files[0])
+            output_dir = self.output_dir_override if self.output_dir_override else str(p.parent)
+        except Exception:
+            output_dir = None
         if output_dir and _Path(output_dir).exists():
             import platform
             import subprocess
